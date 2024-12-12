@@ -1,81 +1,69 @@
-import os
-import numpy as np
-from fastapi import FastAPI, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-import tensorflow as tf
-from io import BytesIO
-import uvicorn
+# import tensorflow as tf
+# import numpy as np
+# from tensorflow.keras.preprocessing.image import load_img, img_to_array
 
-# Create FastAPI app
+# # Load the model
+# model = tf.keras.models.load_model("keras_model.h5")
+
+# # Load the labels
+# labels = []
+# with open("labels.txt", "r") as file:
+#     labels = [line.strip() for line in file.readlines()]
+
+# # Load and preprocess the image
+# image_path = "image.png"
+# image = load_img(image_path, target_size=(224, 224))  # Adjust size if your model uses a different input shape
+# image_array = img_to_array(image)
+# image_array = np.expand_dims(image_array, axis=0)  # Add batch dimension
+# image_array = image_array / 255.0  # Normalize the image
+
+# # Predict
+# predictions = model.predict(image_array)
+
+# # Print category percentages
+# for i, label in enumerate(labels):
+#     print(f"{label}: {predictions[0][i] * 100:.2f}%")
+
+
+from fastapi import FastAPI, File, UploadFile
+import tensorflow as tf
+import numpy as np
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
+from io import BytesIO
+
+# Initialize FastAPI app
 app = FastAPI()
 
-# Add CORS middleware to allow cross-origin requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
-)
+# Load the model
+model = tf.keras.models.load_model("keras_model.h5")
 
-# Load the Keras model
-# Replace 'keras_model.h5' with your actual model filename
-model = tf.keras.models.load_model('keras_model.h5')
+# Load the labels
+labels = []
+with open("labels.txt", "r") as file:
+    labels = [line.strip() for line in file.readlines()]
 
-# Load class labels
-# Create a labels.txt file with your class labels, one per line
-with open('labels.txt', 'r') as f:
-    CLASS_LABELS = [line.strip() for line in f.readlines()]
+# Function to preprocess the image
+def preprocess_image(image_file):
+    image = load_img(BytesIO(image_file.read()), target_size=(224, 224))  # Adjust size if your model uses a different input shape
+    image_array = img_to_array(image)
+    image_array = np.expand_dims(image_array, axis=0)  # Add batch dimension
+    image_array = image_array / 255.0  # Normalize the image
+    return image_array
 
-def preprocess_image(image):
-    """
-    Preprocess the uploaded image to match Teachable Machine model input requirements
-    
-    Typical Teachable Machine preprocessing:
-    1. Resize to model's expected input size (usually 224x224)
-    2. Convert to RGB
-    3. Normalize pixel values
-    """
-    # Resize image to match model's expected input size (modify as needed)
-    image = image.resize((224, 224))
-    
-    # Convert to numpy array and normalize
-    img_array = np.asarray(image) / 255.0
-    
-    # Add batch dimension
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    return img_array
+# API endpoint to classify the image
+@app.post("/classify")
+async def classify_image(file: UploadFile = File(...)):
+    try:
+        # Preprocess the uploaded image
+        image_array = preprocess_image(file.file)
 
-@app.post("/predict")
-async def predict_image(file: UploadFile = File(...)):
-    """
-    Endpoint to predict image classification
-    """
-    # Read the uploaded image file
-    contents = await file.read()
-    image = Image.open(BytesIO(contents))
-    
-    # Preprocess the image
-    processed_image = preprocess_image(image)
-    
-    # Make prediction
-    predictions = model.predict(processed_image)[0]
-    
-    # Create results dictionary
-    results = {
-        label: float(prob) * 100 
-        for label, prob in zip(CLASS_LABELS, predictions)
-    }
-    
-    return results
+        # Predict
+        predictions = model.predict(image_array)
 
-# Optional: Health check endpoint
-@app.get("/")
-def health_check():
-    return {"status": "healthy", "model": "Teachable Machine Classifier"}
+        # Create a response dictionary
+        response = {label: float(predictions[0][i]) for i, label in enumerate(labels)}
 
-# For local testing
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        return {"success": True, "predictions": response}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
